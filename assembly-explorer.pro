@@ -35,3 +35,6 @@ HEADERS += \
 FORMS += \
         MainWindow.ui \
     SettingsDialog.ui
+
+DISTFILES += \
+    README.md
