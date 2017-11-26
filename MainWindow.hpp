@@ -26,6 +26,8 @@ public:
     explicit MainWindow(QWidget *parent = 0);
     ~MainWindow();
 
+    void showFunction(const QModelIndex &index);
+
 private slots:
     void on_actionOpen_triggered();
 
@@ -34,6 +36,8 @@ private slots:
     void on_treeViewStructure_pressed(const QModelIndex &index);
 
     void on_actionSettings_triggered();
+
+    void on_treeViewStructure_activated(const QModelIndex &index);
 
 private:
 

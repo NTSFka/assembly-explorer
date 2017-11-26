@@ -96,6 +96,9 @@ void MainWindow::on_actionOpen_triggered()
         ui->actionOpen->setEnabled(true);
     });
 
+    // -d: Disassemble
+    // -S: Source
+    // -C: Demangle
     process->start(m_objdumpPath, {"-d", "-S", "-C", filename});
 }
 
@@ -137,10 +140,13 @@ void MainWindow::processResult(QIODevice &device)
     static QRegularExpression sectionRegex("^Disassembly of section\\s+(.*):$"); // Disassembly of section .text:
     static QRegularExpression functionRegex("^([0-9a-fA-F]+)\\s+<(.*)>:$");
     static QRegularExpression lineRegex("^\\s*([0-9a-fA-F]+):\\s+([0-9a-fA-F ]+)(\t(.*))?$");
+    static QRegularExpression signatureRegex("^([^\(]+::)?(.+(\\(.*\\))?)$");
 
     QStandardItem* sectionItem = nullptr;
     QStandardItem* functionItem = nullptr;
     QVariantList functionBody;
+
+    QMap<QString, QStandardItem*> lookup;
 
     while (!is.atEnd())
     {
@@ -152,17 +158,10 @@ void MainWindow::processResult(QIODevice &device)
         if (sectionMatch.hasMatch())
         {
             // Store last section
-            if (sectionItem)
+            if (sectionItem && functionItem)
             {
-                // Store last function
-                if (functionItem)
-                {
-                    functionItem->setData(functionBody, Qt::UserRole + 2);
-                    sectionItem->appendRow(functionItem);
-                    functionItem = nullptr;
-                }
-
-                m_structureModel.appendRow(sectionItem);
+                functionItem->setData(functionBody, Qt::UserRole + 2);
+                functionItem = nullptr;
             }
 
             // Section name
@@ -170,6 +169,7 @@ void MainWindow::processResult(QIODevice &device)
 
             // Create section item
             sectionItem = new QStandardItem(section);
+            m_structureModel.appendRow(sectionItem);
         }
         else if (sectionItem && functionMatch.hasMatch())
         {
@@ -177,16 +177,55 @@ void MainWindow::processResult(QIODevice &device)
             if (functionItem)
             {
                 functionItem->setData(functionBody, Qt::UserRole + 2);
-                sectionItem->appendRow(functionItem);
             }
 
             // Function address
-            qlonglong functionAddress = functionMatch.captured(1).toLongLong(nullptr, 16);
+            const qlonglong functionAddress = functionMatch.captured(1).toLongLong(nullptr, 16);
             QString functionName = functionMatch.captured(2);
+
+            QStandardItem* last = sectionItem;
+            QString path;
+
+            // C++ names
+            const auto signatureMatch = signatureRegex.match(functionName);
+
+            if (signatureMatch.hasMatch())
+            {
+                QStringList parts = signatureMatch.captured(1).split("::");
+                functionName = signatureMatch.captured(2);
+
+                for (int i = 0; i < parts.size() - 1; ++i)
+                {
+                    QString name = parts[i];
+                    path += name + "::";
+                    QStandardItem* item;
+
+                    auto it = lookup.find(path);
+                    if (it != lookup.end())
+                    {
+                        item= it.value();
+                    }
+                    else
+                    {
+                        item = new QStandardItem(name);
+                        last->appendRow(item);
+                        lookup.insert(path, item);
+                    }
+
+                    last = item;
+                }
+            }
 
             functionItem = new QStandardItem(functionName);
             functionItem->setData(functionAddress, Qt::UserRole + 1);
             functionBody.clear();
+
+            // Store function into lookup
+            //if (!path.isEmpty())
+            //    lookup.insert(path + "::" + functionName + "::", functionItem);
+
+            // Store function
+            last->appendRow(functionItem);
         }
         else if (functionItem)
         {
@@ -216,13 +255,7 @@ void MainWindow::processResult(QIODevice &device)
     }
 
     if (functionItem)
-    {
         functionItem->setData(functionBody, Qt::UserRole + 2);
-        sectionItem->appendRow(functionItem);
-    }
-
-    if (sectionItem)
-        m_structureModel.appendRow(sectionItem);
 }
 
 /* ************************************************************************* */
@@ -236,6 +269,28 @@ void MainWindow::closeEvent(QCloseEvent *event)
 /* ************************************************************************* */
 
 void MainWindow::on_treeViewStructure_pressed(const QModelIndex &index)
+{
+    showFunction(index);
+}
+
+/* ************************************************************************* */
+
+void MainWindow::on_actionSettings_triggered()
+{
+    QSettings settings;
+
+    SettingsDialog dlg(this);
+    dlg.setObjdumpPath(m_objdumpPath);
+
+    if (dlg.exec() == QDialog::Accepted)
+    {
+        m_objdumpPath = dlg.objdumpPath();
+    }
+}
+
+/* ************************************************************************* */
+
+void MainWindow::showFunction(const QModelIndex &index)
 {
     const auto lines = index.data(Qt::UserRole + 2).toList();
 
@@ -253,7 +308,7 @@ void MainWindow::on_treeViewStructure_pressed(const QModelIndex &index)
             const QString assembly = parts.size() > 2 ? parts.at(2).toString() : QString();
 
             auto* addressItem = new QStandardItem(QString::number(address, 16).rightJustified(8, '0'));
-            addressItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            //addressItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
             item.append(addressItem);
             item.append(new QStandardItem(assembly));
@@ -273,17 +328,9 @@ void MainWindow::on_treeViewStructure_pressed(const QModelIndex &index)
 
 /* ************************************************************************* */
 
-void MainWindow::on_actionSettings_triggered()
+void MainWindow::on_treeViewStructure_activated(const QModelIndex &index)
 {
-    QSettings settings;
-
-    SettingsDialog dlg(this);
-    dlg.setObjdumpPath(m_objdumpPath);
-
-    if (dlg.exec() == QDialog::Accepted)
-    {
-        m_objdumpPath = dlg.objdumpPath();
-    }
+    showFunction(index);
 }
 
 /* ************************************************************************* */
